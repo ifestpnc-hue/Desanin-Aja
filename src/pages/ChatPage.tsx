@@ -6,7 +6,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, MessageSquare, ArrowLeft, Package } from "lucide-react";
+import { Send, MessageSquare, ArrowLeft, Package, Paperclip, FileText, X, Loader2, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 
 interface Conversation {
@@ -25,6 +25,8 @@ interface ChatMessage {
   content: string;
   is_read: boolean;
   created_at: string;
+  file_url: string | null;
+  file_name: string | null;
 }
 
 const ChatPage = () => {
@@ -39,7 +41,12 @@ const ChatPage = () => {
   const [newMessage, setNewMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [loadingConvs, setLoadingConvs] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const orderChatInitialized = useRef(false);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -57,12 +64,12 @@ const ChatPage = () => {
     setLoadingConvs(false);
   }, [user]);
 
-  // Handle order-linked chat creation
+  // Handle order-linked chat creation - only once
   useEffect(() => {
-    if (!user || !orderCode) return;
+    if (!user || !orderCode || orderChatInitialized.current) return;
+    orderChatInitialized.current = true;
 
     const initOrderChat = async () => {
-      // Find order by code
       const { data: order } = await supabase
         .from("orders")
         .select("id, order_code, items, brand_name")
@@ -85,8 +92,8 @@ const ChatPage = () => {
 
       if (existing) {
         setActiveConvId(existing.id);
+        loadConversations();
       } else {
-        // Create new conversation for this order
         const subject = `Pesanan ${order.order_code} - ${order.brand_name}`;
         const { data: newConv, error } = await supabase
           .from("chat_conversations")
@@ -98,7 +105,6 @@ const ChatPage = () => {
           const conv = newConv as Conversation;
           setActiveConvId(conv.id);
 
-          // Send initial message
           const items = Array.isArray(order.items)
             ? (order.items as any[]).map((i: any) => i.name).join(", ")
             : "";
@@ -107,18 +113,19 @@ const ChatPage = () => {
             sender_id: user.id,
             content: `Halo Admin, saya ingin berdiskusi tentang pesanan ${order.order_code} (${order.brand_name}).\nLayanan: ${items}`,
           });
+          loadConversations();
         }
       }
     };
 
     initOrderChat();
-  }, [user, orderCode]);
+  }, [user, orderCode, loadConversations]);
 
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
 
-  // Load messages for active conversation
+  // Load messages for active conversation with deduplication
   useEffect(() => {
     if (!activeConvId) {
       setMessages([]);
@@ -136,7 +143,6 @@ const ChatPage = () => {
 
     loadMessages();
 
-    // Realtime subscription
     const channel = supabase
       .channel(`messages-${activeConvId}`)
       .on(
@@ -148,7 +154,12 @@ const ChatPage = () => {
           filter: `conversation_id=eq.${activeConvId}`,
         },
         (payload) => {
-          setMessages((prev) => [...prev, payload.new as ChatMessage]);
+          const newMsg = payload.new as ChatMessage;
+          setMessages((prev) => {
+            // Deduplicate by ID
+            if (prev.some((m) => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
         }
       )
       .subscribe();
@@ -160,21 +171,82 @@ const ChatPage = () => {
 
   useEffect(scrollToBottom, [messages]);
 
+  // File selection
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+      toast.error("Ukuran file maksimal 10MB.");
+      return;
+    }
+
+    setSelectedFile(file);
+    if (file.type.startsWith("image/")) {
+      setPreviewUrl(URL.createObjectURL(file));
+    } else {
+      setPreviewUrl(null);
+    }
+  };
+
+  const clearFile = () => {
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const uploadFile = async (): Promise<{ url: string; name: string } | null> => {
+    if (!selectedFile || !user) return null;
+    setUploading(true);
+
+    const ext = selectedFile.name.split(".").pop();
+    const path = `${user.id}/${Date.now()}.${ext}`;
+
+    const { error } = await supabase.storage
+      .from("chat-attachments")
+      .upload(path, selectedFile);
+
+    if (error) {
+      toast.error("Gagal mengupload file.");
+      setUploading(false);
+      return null;
+    }
+
+    const { data: urlData } = supabase.storage
+      .from("chat-attachments")
+      .getPublicUrl(path);
+
+    setUploading(false);
+    return { url: urlData.publicUrl, name: selectedFile.name };
+  };
+
   const handleSend = async () => {
-    if (!newMessage.trim() || !activeConvId || !user) return;
+    if ((!newMessage.trim() && !selectedFile) || !activeConvId || !user) return;
     setSending(true);
+
+    let fileData: { url: string; name: string } | null = null;
+    if (selectedFile) {
+      fileData = await uploadFile();
+      if (!fileData && !newMessage.trim()) {
+        setSending(false);
+        return;
+      }
+    }
 
     const { error } = await supabase.from("chat_messages").insert({
       conversation_id: activeConvId,
       sender_id: user.id,
-      content: newMessage.trim(),
+      content: newMessage.trim() || (fileData ? `📎 ${fileData.name}` : ""),
+      file_url: fileData?.url || null,
+      file_name: fileData?.name || null,
     });
 
     if (error) {
       toast.error("Gagal mengirim pesan.");
     } else {
       setNewMessage("");
-      // Update conversation timestamp
+      clearFile();
       await supabase
         .from("chat_conversations")
         .update({ updated_at: new Date().toISOString() })
@@ -195,6 +267,11 @@ const ChatPage = () => {
       setActiveConvId(conv.id);
       loadConversations();
     }
+  };
+
+  const isImageFile = (name: string | null) => {
+    if (!name) return false;
+    return /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(name);
   };
 
   if (authLoading) {
@@ -283,12 +360,8 @@ const ChatPage = () => {
             >
               {activeConvId ? (
                 <>
-                  {/* Header */}
                   <div className="p-4 border-b border-border flex items-center gap-3">
-                    <button
-                      className="md:hidden"
-                      onClick={() => setActiveConvId(null)}
-                    >
+                    <button className="md:hidden" onClick={() => setActiveConvId(null)}>
                       <ArrowLeft className="h-5 w-5" />
                     </button>
                     <div>
@@ -299,7 +372,6 @@ const ChatPage = () => {
                     </div>
                   </div>
 
-                  {/* Messages */}
                   <ScrollArea className="flex-1 p-4">
                     <div className="space-y-3">
                       {messages.map((msg) => {
@@ -310,13 +382,42 @@ const ChatPage = () => {
                             className={`flex ${isMe ? "justify-end" : "justify-start"}`}
                           >
                             <div
-                              className={`max-w-[75%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap ${
+                              className={`max-w-[75%] rounded-2xl px-4 py-2 text-sm ${
                                 isMe
                                   ? "bg-primary text-primary-foreground rounded-br-md"
                                   : "bg-secondary text-secondary-foreground rounded-bl-md"
                               }`}
                             >
-                              {msg.content}
+                              {/* File attachment */}
+                              {msg.file_url && (
+                                <a
+                                  href={msg.file_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="block mb-2"
+                                >
+                                  {isImageFile(msg.file_name) ? (
+                                    <img
+                                      src={msg.file_url}
+                                      alt={msg.file_name || "image"}
+                                      className="rounded-lg max-w-full max-h-48 object-cover"
+                                    />
+                                  ) : (
+                                    <div className={`flex items-center gap-2 p-2 rounded-lg ${
+                                      isMe ? "bg-primary-foreground/10" : "bg-accent"
+                                    }`}>
+                                      <FileText className="h-5 w-5 shrink-0" />
+                                      <span className="text-xs truncate underline">
+                                        {msg.file_name || "File"}
+                                      </span>
+                                    </div>
+                                  )}
+                                </a>
+                              )}
+                              {/* Text content (hide if it's just the file emoji placeholder) */}
+                              {msg.content && !(msg.file_url && msg.content.startsWith("📎")) && (
+                                <p className="whitespace-pre-wrap">{msg.content}</p>
+                              )}
                               <p
                                 className={`text-[10px] mt-1 ${
                                   isMe ? "text-primary-foreground/60" : "text-muted-foreground"
@@ -335,6 +436,25 @@ const ChatPage = () => {
                     </div>
                   </ScrollArea>
 
+                  {/* File preview */}
+                  {selectedFile && (
+                    <div className="px-4 pt-2 flex items-center gap-2 border-t border-border">
+                      {previewUrl ? (
+                        <img src={previewUrl} alt="preview" className="h-12 w-12 rounded object-cover" />
+                      ) : (
+                        <div className="h-12 w-12 rounded bg-accent flex items-center justify-center">
+                          <FileText className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                      )}
+                      <span className="text-xs text-muted-foreground truncate flex-1">
+                        {selectedFile.name}
+                      </span>
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={clearFile}>
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  )}
+
                   {/* Input */}
                   <div className="p-4 border-t border-border">
                     <form
@@ -344,15 +464,39 @@ const ChatPage = () => {
                       }}
                       className="flex gap-2"
                     >
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileSelect}
+                        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar"
+                        className="hidden"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={sending || uploading}
+                      >
+                        <Paperclip className="h-4 w-4" />
+                      </Button>
                       <Input
                         value={newMessage}
                         onChange={(e) => setNewMessage(e.target.value)}
                         placeholder="Ketik pesan..."
-                        disabled={sending}
+                        disabled={sending || uploading}
                         className="flex-1"
                       />
-                      <Button type="submit" size="icon" disabled={sending || !newMessage.trim()}>
-                        <Send className="h-4 w-4" />
+                      <Button
+                        type="submit"
+                        size="icon"
+                        disabled={sending || uploading || (!newMessage.trim() && !selectedFile)}
+                      >
+                        {sending || uploading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
                       </Button>
                     </form>
                   </div>
