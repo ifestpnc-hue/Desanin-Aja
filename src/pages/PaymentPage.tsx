@@ -75,14 +75,14 @@ const PaymentPage = () => {
 
       if (error) throw error;
 
-      const { snap_token, client_key } = data;
+      const { snap_token, client_key, is_sandbox } = data;
 
       if (!snap_token) {
         throw new Error("Gagal mendapatkan token pembayaran.");
       }
 
       // Load Midtrans Snap
-      const snapUrl = client_key?.startsWith("SB-")
+      const snapUrl = is_sandbox
         ? "https://app.sandbox.midtrans.com/snap/snap.js"
         : "https://app.midtrans.com/snap/snap.js";
 

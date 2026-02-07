@@ -21,21 +21,24 @@ serve(async (req) => {
       });
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(
-      authHeader.replace("Bearer ", "")
-    );
-    if (claimsError || !claimsData?.claims) {
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    // Use getUser() instead of getClaims()
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData?.user) {
+      console.error("Auth error:", userError);
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    const user = userData.user;
 
     const MIDTRANS_SERVER_KEY = Deno.env.get("MIDTRANS_SERVER_KEY");
     const MIDTRANS_CLIENT_KEY = Deno.env.get("MIDTRANS_CLIENT_KEY");
@@ -71,12 +74,12 @@ serve(async (req) => {
 
     const midtransOrderId = `${order_code}-${Date.now()}`;
 
-    const itemDetails = Array.isArray(items)
+    const itemDetails: any[] = Array.isArray(items)
       ? items.map((item: any) => ({
           id: item.id || "item",
           price: item.price,
           quantity: 1,
-          name: item.name?.substring(0, 50) || "Layanan Desain",
+          name: (item.name || "Layanan Desain").substring(0, 50),
         }))
       : [{ id: "order", price: amount, quantity: 1, name: "Layanan Desain" }];
 
@@ -86,13 +89,12 @@ serve(async (req) => {
       0
     );
     if (payment_type === "dp" && totalFromItems !== amount) {
-      // Replace with single DP line item
       itemDetails.length = 0;
       itemDetails.push({
         id: "dp-payment",
         price: amount,
         quantity: 1,
-        name: `DP 50% - ${brand_name}`,
+        name: `DP 50% - ${brand_name}`.substring(0, 50),
       });
     }
 
@@ -103,28 +105,45 @@ serve(async (req) => {
       },
       item_details: itemDetails,
       customer_details: {
-        first_name: brand_name,
-        email: claimsData.claims.email || "",
+        first_name: brand_name || "Customer",
+        email: user.email || "",
       },
     };
+
+    console.log("Midtrans request payload:", JSON.stringify(payload));
+    console.log("Using sandbox:", isSandbox);
 
     const authString = btoa(`${MIDTRANS_SERVER_KEY}:`);
     const response = await fetch(midtransUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Accept: "application/json",
         Authorization: `Basic ${authString}`,
       },
       body: JSON.stringify(payload),
     });
 
+    const contentType = response.headers.get("content-type");
+    if (!contentType || !contentType.includes("application/json")) {
+      const text = await response.text();
+      console.error("Midtrans returned non-JSON:", text.substring(0, 300));
+      return new Response(
+        JSON.stringify({ error: "Midtrans returned invalid response." }),
+        {
+          status: 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
     const result = await response.json();
 
     if (!response.ok) {
-      console.error("Midtrans error:", result);
+      console.error("Midtrans error:", JSON.stringify(result));
       return new Response(
         JSON.stringify({
-          error: `Midtrans error: ${JSON.stringify(result)}`,
+          error: `Midtrans error: ${result.error_messages?.join(", ") || JSON.stringify(result)}`,
         }),
         {
           status: 500,
@@ -134,7 +153,7 @@ serve(async (req) => {
     }
 
     // Update order with Midtrans data
-    await supabase
+    const { error: updateError } = await supabase
       .from("orders")
       .update({
         midtrans_order_id: midtransOrderId,
@@ -142,11 +161,16 @@ serve(async (req) => {
       })
       .eq("id", order_id);
 
+    if (updateError) {
+      console.error("Failed to update order:", updateError);
+    }
+
     return new Response(
       JSON.stringify({
         snap_token: result.token,
         redirect_url: result.redirect_url,
         client_key: MIDTRANS_CLIENT_KEY,
+        is_sandbox: isSandbox,
       }),
       {
         status: 200,
