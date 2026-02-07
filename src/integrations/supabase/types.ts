@@ -14,16 +14,196 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      chat_conversations: {
+        Row: {
+          created_at: string
+          id: string
+          order_id: string | null
+          subject: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          order_id?: string | null
+          subject?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          order_id?: string | null
+          subject?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_conversations_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_messages: {
+        Row: {
+          content: string
+          conversation_id: string
+          created_at: string
+          id: string
+          is_read: boolean
+          sender_id: string
+        }
+        Insert: {
+          content: string
+          conversation_id: string
+          created_at?: string
+          id?: string
+          is_read?: boolean
+          sender_id: string
+        }
+        Update: {
+          content?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          is_read?: boolean
+          sender_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "chat_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      orders: {
+        Row: {
+          brand_name: string
+          brief: string
+          created_at: string
+          deadline: string
+          discount: number | null
+          dp_amount: number | null
+          id: string
+          items: Json
+          midtrans_order_id: string | null
+          midtrans_snap_token: string | null
+          order_code: string
+          payment_option: string
+          reference: string | null
+          status: string
+          style: string | null
+          total_price: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          brand_name: string
+          brief: string
+          created_at?: string
+          deadline: string
+          discount?: number | null
+          dp_amount?: number | null
+          id?: string
+          items?: Json
+          midtrans_order_id?: string | null
+          midtrans_snap_token?: string | null
+          order_code: string
+          payment_option?: string
+          reference?: string | null
+          status?: string
+          style?: string | null
+          total_price: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          brand_name?: string
+          brief?: string
+          created_at?: string
+          deadline?: string
+          discount?: number | null
+          dp_amount?: number | null
+          id?: string
+          items?: Json
+          midtrans_order_id?: string | null
+          midtrans_snap_token?: string | null
+          order_code?: string
+          payment_option?: string
+          reference?: string | null
+          status?: string
+          style?: string | null
+          total_price?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          full_name: string | null
+          id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "user"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +330,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "user"],
+    },
   },
 } as const
