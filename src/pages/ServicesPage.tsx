@@ -47,9 +47,7 @@ const ServicesPage = () => {
           <p className="text-sm font-medium text-accent-foreground">
             ⚠️ Wajib konsultasi dengan admin sebelum melakukan pembayaran.{" "}
             <a
-              href="https://wa.me/6281234567890?text=Halo%20KreasiVisual!%20Saya%20ingin%20konsultasi%20desain."
-              target="_blank"
-              rel="noopener noreferrer"
+              href="/chat"
               className="underline text-primary"
             >
               Chat Admin Sekarang
