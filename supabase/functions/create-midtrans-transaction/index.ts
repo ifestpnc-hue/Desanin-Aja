@@ -67,6 +67,8 @@ serve(async (req) => {
     }
 
     // Determine Midtrans API URL (sandbox vs production based on key prefix)
+    const serverKeyPrefix = MIDTRANS_SERVER_KEY.substring(0, 10);
+    console.log("Server key prefix:", serverKeyPrefix);
     const isSandbox = MIDTRANS_SERVER_KEY.startsWith("SB-");
     const midtransUrl = isSandbox
       ? "https://app.sandbox.midtrans.com/snap/v1/transactions"
